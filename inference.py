@@ -126,15 +126,23 @@ def run_task(task_id: str, env_url: str, client: OpenAI) -> None:
 
             # Query the LLM
             try:
-                response = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[
+                # Use max_completion_tokens for newer models, max_tokens for older
+                api_params = {
+                    "model": MODEL_NAME,
+                    "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
                         {"role": "user", "content": user_prompt},
                     ],
-                    temperature=0.0,
-                    max_tokens=150,
-                )
+                    "temperature": 0.0,
+                }
+                try:
+                    response = client.chat.completions.create(
+                        **api_params, max_completion_tokens=150
+                    )
+                except Exception:
+                    response = client.chat.completions.create(
+                        **api_params, max_tokens=150
+                    )
                 llm_text = response.choices[0].message.content.strip()
             except Exception as e:
                 llm_text = '{"action_type": "check_status", "target_service": ""}'
