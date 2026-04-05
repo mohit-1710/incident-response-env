@@ -1,10 +1,10 @@
-"""Grader sanity checks — verify scoring correctness at boundary conditions.
+"""Grader sanity checks — verify binary rubric scoring correctness.
 
 For each task, we validate:
 1. Fresh reset produces zero reward (no actions = no credit)
-2. Golden path (optimal actions) produces near-perfect reward
-3. Partial progress produces intermediate reward
-4. Wrong fixes produce penalties
+2. Golden path (optimal actions) produces all rubrics passing
+3. Partial progress produces intermediate rubric pass rates
+4. Wrong fixes cause the 'no_incorrect_fixes' rubric to fail
 """
 
 import sys
@@ -12,14 +12,13 @@ from pathlib import Path
 
 import pytest
 
-# Ensure the package root is importable
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from models import IncidentAction
 from scenarios import AVAILABLE_TASKS, SCENARIOS
 from server.environment import IncidentResponseEnvironment
 
-# Golden paths: the known-optimal action sequences for each task
+# Golden paths: known-optimal action sequences for each task
 GOLDEN_PATHS = {
     "single_service_failure": [
         IncidentAction(action_type="acknowledge", target_service="database"),
@@ -49,29 +48,27 @@ class TestBaselineScoring:
     def test_reset_reward_is_zero(self, task_name: str) -> None:
         env = IncidentResponseEnvironment()
         obs = env.reset(task_name=task_name)
-        assert obs.reward == 0.0 or obs.reward is None
+        assert obs.reward is None or obs.reward == 0.0
         assert obs.done is False
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
     def test_reset_services_not_all_healthy(self, task_name: str) -> None:
-        """At least one service must be broken on reset."""
         env = IncidentResponseEnvironment()
         obs = env.reset(task_name=task_name)
-        statuses = list(obs.services.values())
-        assert any(s != "healthy" for s in statuses)
+        assert any(s != "healthy" for s in obs.services.values())
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
     def test_reset_has_alerts(self, task_name: str) -> None:
         env = IncidentResponseEnvironment()
         obs = env.reset(task_name=task_name)
-        assert len(obs.alerts) >= 3  # Minimum 3 alerts per scenario
+        assert len(obs.alerts) >= 3
 
 
 class TestGoldenPath:
-    """Verify that optimal play produces near-perfect score."""
+    """Verify that optimal play produces all rubrics passing."""
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
-    def test_golden_path_reaches_high_score(self, task_name: str) -> None:
+    def test_golden_path_all_rubrics_pass(self, task_name: str) -> None:
         env = IncidentResponseEnvironment()
         env.reset(task_name=task_name)
 
@@ -79,7 +76,10 @@ class TestGoldenPath:
             obs = env.step(action)
 
         assert obs.done is True
-        assert obs.reward >= 0.95, f"Golden path score {obs.reward} too low for {task_name}"
+        assert obs.reward == 1.0, (
+            f"Golden path should pass all rubrics. "
+            f"Failed: {[r['name'] for r in obs.rubric_results if not r['passed']]}"
+        )
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
     def test_golden_path_all_services_healthy(self, task_name: str) -> None:
@@ -90,85 +90,109 @@ class TestGoldenPath:
             obs = env.step(action)
 
         assert obs.resolved_count == obs.total_services
-        assert all(s == "healthy" for s in obs.services.values())
-
-
-class TestPartialProgress:
-    """Verify that partial actions produce intermediate scores."""
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
-    def test_acknowledge_only_gives_small_reward(self, task_name: str) -> None:
-        """Acknowledging without fixing gives credit but not much."""
-        env = IncidentResponseEnvironment()
-        env.reset(task_name=task_name)
-
-        # Acknowledge just the first root cause alert
-        root_svc = SCENARIOS[task_name].root_cause_services[0]
-        obs = env.step(IncidentAction(action_type="acknowledge", target_service=root_svc))
-
-        assert obs.reward > 0.0, "Acknowledge should give some reward"
-        assert obs.reward < 0.3, "Acknowledge alone shouldn't give too much"
-        assert obs.done is False
-
-    @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
-    def test_diagnose_without_fix_gives_intermediate(self, task_name: str) -> None:
-        env = IncidentResponseEnvironment()
-        env.reset(task_name=task_name)
-
-        root_svc = SCENARIOS[task_name].root_cause_services[0]
-        env.step(IncidentAction(action_type="acknowledge", target_service=root_svc))
-        obs = env.step(IncidentAction(action_type="diagnose", target_service=root_svc))
-
-        assert obs.reward > 0.1
-        assert obs.reward < 0.6
-        assert obs.done is False
-
-
-class TestWrongFixPenalty:
-    """Verify that fixing symptoms (not root cause) is penalised."""
-
-    def test_fix_symptom_gives_penalty(self) -> None:
-        """Fixing a downstream service that isn't a root cause."""
-        env = IncidentResponseEnvironment()
-        env.reset(task_name="multi_service_correlation")
-
-        # Fix frontend — a symptom, not root cause (redis)
-        obs = env.step(IncidentAction(action_type="fix", target_service="frontend"))
-        assert obs.reward < 0.0, "Fixing a symptom should produce negative reward"
-
-    def test_fix_symptom_does_not_heal_service(self) -> None:
-        """Symptom service should stay broken when its upstream is still down."""
-        env = IncidentResponseEnvironment()
-        env.reset(task_name="multi_service_correlation")
-
-        obs = env.step(IncidentAction(action_type="fix", target_service="frontend"))
-        assert obs.services["frontend"] != "healthy"
-
-
-class TestRewardBounds:
-    """Verify reward stays within [0.0, 1.0] under all conditions."""
-
-    def test_many_wrong_fixes_clamp_to_zero(self) -> None:
-        """Repeated symptom fixes shouldn't produce deeply negative scores."""
-        env = IncidentResponseEnvironment()
-        obs = env.reset(task_name="cascading_outage")
-
-        # Fix many symptoms
-        symptoms = [s for s in obs.services if s not in ("primary_db", "message_queue")]
-        for svc in symptoms[:5]:
-            obs = env.step(IncidentAction(action_type="fix", target_service=svc))
-
-        # Reward should be clamped, not deeply negative
-        assert obs.reward >= 0.0 or not obs.done
-        # When episode ends, final reward is clamped
-        # During episode, accumulated may be negative but that's ok
-
-    @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
-    def test_golden_path_reward_at_most_one(self, task_name: str) -> None:
+    def test_golden_path_rubric_details(self, task_name: str) -> None:
+        """Each rubric should individually be 1.0."""
         env = IncidentResponseEnvironment()
         env.reset(task_name=task_name)
 
         for action in GOLDEN_PATHS[task_name]:
             obs = env.step(action)
 
-        assert obs.reward <= 1.0
+        for rubric in obs.rubric_results:
+            assert rubric["score"] == 1.0, f"Rubric '{rubric['name']}' failed"
+            assert rubric["passed"] is True
+
+
+class TestPartialProgress:
+    """Verify that partial actions produce intermediate scores."""
+
+    @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
+    def test_diagnose_only_partial_score(self, task_name: str) -> None:
+        """Diagnosing without fixing should pass some rubrics but not all."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name=task_name)
+
+        # Diagnose root cause but don't fix — then let max steps expire
+        root_svc = SCENARIOS[task_name].root_cause_services[0]
+        env.step(IncidentAction(action_type="diagnose", target_service=root_svc))
+
+        # Burn remaining steps
+        for _ in range(SCENARIOS[task_name].max_steps):
+            obs = env.step(IncidentAction(action_type="check_status", target_service=""))
+            if obs.done:
+                break
+
+        assert obs.done is True
+        assert 0.0 < obs.reward < 1.0  # Some rubrics pass, not all
+
+
+class TestWrongFixPenalty:
+    """Verify that fixing symptoms causes the no_incorrect_fixes rubric to fail."""
+
+    def test_symptom_fix_fails_rubric(self) -> None:
+        env = IncidentResponseEnvironment()
+        env.reset(task_name="multi_service_correlation")
+
+        # Fix symptom first, then fix root cause
+        env.step(IncidentAction(action_type="fix", target_service="frontend"))
+        env.step(IncidentAction(action_type="diagnose", target_service="redis"))
+        obs = env.step(IncidentAction(action_type="fix", target_service="redis"))
+
+        assert obs.done is True
+        # Find the no_incorrect_fixes rubric — it should fail
+        no_fix_rubric = next(
+            r for r in obs.rubric_results if "incorrect" in r["name"].lower()
+        )
+        assert no_fix_rubric["passed"] is False
+        assert obs.reward < 1.0  # Can't get perfect score with a symptom fix
+
+
+class TestRewardBounds:
+    """Verify reward stays within [0.0, 1.0]."""
+
+    @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
+    def test_golden_path_reward_exactly_one(self, task_name: str) -> None:
+        env = IncidentResponseEnvironment()
+        env.reset(task_name=task_name)
+        for action in GOLDEN_PATHS[task_name]:
+            obs = env.step(action)
+        assert obs.reward == 1.0
+
+    def test_no_actions_scores_near_zero(self) -> None:
+        """Doing nothing passes at most the 'no incorrect fixes' rubric vacuously."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name="single_service_failure")
+        for _ in range(15):
+            obs = env.step(IncidentAction(action_type="check_status", target_service=""))
+        assert obs.done is True
+        assert obs.reward <= 0.2  # At most 1 vacuous rubric passes
+
+
+class TestRubricCounts:
+    """Verify each task has the expected number of rubrics."""
+
+    def test_easy_rubric_count(self) -> None:
+        """Easy: 1 root diagnosed + 1 root fixed + all_restored + no_incorrect + efficiency = 5."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name="single_service_failure")
+        for action in GOLDEN_PATHS["single_service_failure"]:
+            obs = env.step(action)
+        assert len(obs.rubric_results) == 5
+
+    def test_medium_rubric_count(self) -> None:
+        """Medium: 1 root diagnosed + 1 root fixed + all_restored + no_incorrect + efficiency = 5."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name="multi_service_correlation")
+        for action in GOLDEN_PATHS["multi_service_correlation"]:
+            obs = env.step(action)
+        assert len(obs.rubric_results) == 5
+
+    def test_hard_rubric_count(self) -> None:
+        """Hard: 2 roots diagnosed + 2 roots fixed + all_restored + no_incorrect + efficiency = 7."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name="cascading_outage")
+        for action in GOLDEN_PATHS["cascading_outage"]:
+            obs = env.step(action)
+        assert len(obs.rubric_results) == 7

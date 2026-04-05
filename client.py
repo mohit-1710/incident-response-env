@@ -54,6 +54,7 @@ class IncidentResponseEnv(
                 total_services=obs_data.get("total_services", 0),
                 step_number=obs_data.get("step_number", 0),
                 max_steps=obs_data.get("max_steps", 0),
+                rubric_results=obs_data.get("rubric_results", []),
             ),
             reward=payload.get("reward"),
             done=payload.get("done", False),

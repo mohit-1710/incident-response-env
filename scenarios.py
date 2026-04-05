@@ -60,9 +60,11 @@ SINGLE_SERVICE_FAILURE = Scenario(
     task_id="single_service_failure",
     name="Single Service Failure",
     description=(
-        "A database connection timeout is causing errors across the stack. "
-        "Three services are affected in a linear dependency chain. "
-        "Identify and fix the root cause to restore all services."
+        "Hey, just got paged — the web app is throwing 502s and the API "
+        "server is returning errors on most requests. Looks like something "
+        "is wrong with the backend. Can you take a look and get things "
+        "back online? Should be straightforward, probably one thing causing "
+        "the whole chain to fall over."
     ),
     services=[
         ServiceDef(
@@ -143,11 +145,13 @@ MULTI_SERVICE_CORRELATION = Scenario(
     task_id="multi_service_correlation",
     name="Multi-Service Correlation",
     description=(
-        "Multiple alerts are firing across an e-commerce platform. "
-        "A branching service dependency tree means symptoms appear "
-        "far from the root cause. Trace the dependency graph upstream "
-        "to find and fix the actual root cause — do not waste time "
-        "fixing downstream symptoms."
+        "Getting hammered with alerts on the e-commerce platform — frontend "
+        "is broken for users, API gateway is rejecting most requests, and "
+        "auth is completely down. Orders are still going through somehow but "
+        "everything login-related is dead. The on-call channel is full of "
+        "people saying 'just restart the frontend' but I don't think that's "
+        "the actual problem. Can you trace this upstream and figure out what's "
+        "actually broken? Don't waste time fixing symptoms."
     ),
     services=[
         ServiceDef(
@@ -279,11 +283,16 @@ CASCADING_OUTAGE = Scenario(
     task_id="cascading_outage",
     name="Cascading Outage",
     description=(
-        "A major production outage with two simultaneous root causes. "
-        "The primary database disk is full and the message queue has a "
-        "consumer deadlock. Cascading failures have impacted 10 services, "
-        "generating an alert storm. Triage by severity, identify both root "
-        "causes, and fix them in the correct priority order."
+        "Just got pulled into the war room — everything is on fire. The CDN "
+        "is serving stale content, load balancer is returning 503s, both app "
+        "servers are completely unresponsive, and the worker pool has 34K jobs "
+        "backed up with an SLA breach in 13 minutes. Notification service is "
+        "dead too so customers aren't even getting status updates. Someone in "
+        "#infra-alerts mentioned disk space on one of the databases but I "
+        "couldn't tell which one. Platform team thinks there might be TWO "
+        "separate things going on — the web stack issues and the worker/queue "
+        "issues might have different root causes. Start triaging by severity, "
+        "I'll join in 10."
     ),
     services=[
         ServiceDef(

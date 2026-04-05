@@ -52,6 +52,7 @@ class IncidentObservation(Observation):
     total_services: int = 0
     step_number: int = 0
     max_steps: int = 0
+    rubric_results: List[Dict[str, Any]] = []
 
 
 class IncidentState(State):
