@@ -1,0 +1,33 @@
+name: incident_response_env
+version: 0.1.0
+description: >
+  SRE incident response triage environment where an AI agent handles
+  production outages by diagnosing root causes in service dependency
+  graphs and applying targeted fixes to restore system health.
+entrypoint: server.app:app
+type: http
+spec_version: "1.0"
+
+tasks:
+  - id: single_service_failure
+    name: "Single Service Failure"
+    description: >
+      A database connection timeout causes cascading errors across a
+      3-service linear dependency chain. Identify the root cause and
+      apply the correct fix to restore all services. (Easy)
+
+  - id: multi_service_correlation
+    name: "Multi-Service Correlation"
+    description: >
+      Multiple alerts fire across a 6-service e-commerce platform with
+      branching dependencies. Symptoms appear far from the root cause.
+      Trace the dependency graph upstream to find and fix the actual
+      root cause — do not waste time fixing downstream symptoms. (Medium)
+
+  - id: cascading_outage
+    name: "Cascading Outage"
+    description: >
+      A major production outage with two simultaneous root causes in a
+      12-service dependency web. An alert storm of 12+ alerts makes
+      triage challenging. Identify both root causes, fix them in the
+      correct priority order, and restore the entire system. (Hard)
