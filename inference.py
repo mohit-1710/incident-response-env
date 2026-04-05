@@ -126,7 +126,6 @@ def run_task(task_id: str, env_url: str, client: OpenAI) -> None:
 
             # Query the LLM
             try:
-                # Use max_completion_tokens for newer models, max_tokens for older
                 api_params = {
                     "model": MODEL_NAME,
                     "messages": [
@@ -134,18 +133,21 @@ def run_task(task_id: str, env_url: str, client: OpenAI) -> None:
                         {"role": "user", "content": user_prompt},
                     ],
                     "temperature": 0.0,
+                    "max_completion_tokens": 256,
                 }
-                try:
-                    response = client.chat.completions.create(
-                        **api_params, max_completion_tokens=150
-                    )
-                except Exception:
-                    response = client.chat.completions.create(
-                        **api_params, max_tokens=150
-                    )
-                llm_text = response.choices[0].message.content.strip()
+                response = client.chat.completions.create(**api_params)
+                content = response.choices[0].message.content
+                llm_text = content.strip() if content else ""
             except Exception as e:
-                llm_text = '{"action_type": "check_status", "target_service": ""}'
+                # Retry with max_tokens for older models
+                try:
+                    api_params.pop("max_completion_tokens", None)
+                    api_params["max_tokens"] = 256
+                    response = client.chat.completions.create(**api_params)
+                    content = response.choices[0].message.content
+                    llm_text = content.strip() if content else ""
+                except Exception:
+                    llm_text = '{"action_type": "check_status", "target_service": ""}'
 
             # Parse into action
             action = parse_llm_response(llm_text)
