@@ -1,3 +1,14 @@
+---
+title: Incident Response Environment
+emoji: 🚨
+colorFrom: red
+colorTo: yellow
+sdk: docker
+app_port: 7860
+tags:
+  - openenv
+---
+
 # Incident Response Environment
 
 **Train AI agents to handle production incidents like an on-call SRE.**
