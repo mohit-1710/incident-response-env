@@ -27,16 +27,21 @@ GOLDEN_PATHS = {
     ],
     "multi_service_correlation": [
         IncidentAction(action_type="acknowledge", target_service="redis"),
+        IncidentAction(action_type="acknowledge", target_service="auth_service"),
         IncidentAction(action_type="diagnose", target_service="redis"),
         IncidentAction(action_type="fix", target_service="redis"),
     ],
     "cascading_outage": [
         IncidentAction(action_type="acknowledge", target_service="primary_db"),
         IncidentAction(action_type="acknowledge", target_service="message_queue"),
+        IncidentAction(action_type="acknowledge", target_service="app_server_1"),
+        IncidentAction(action_type="acknowledge", target_service="app_server_2"),
         IncidentAction(action_type="diagnose", target_service="primary_db"),
         IncidentAction(action_type="fix", target_service="primary_db"),
         IncidentAction(action_type="diagnose", target_service="message_queue"),
         IncidentAction(action_type="fix", target_service="message_queue"),
+        IncidentAction(action_type="diagnose", target_service="session_store"),
+        IncidentAction(action_type="fix", target_service="session_store"),
     ],
 }
 
@@ -174,25 +179,25 @@ class TestRubricCounts:
     """Verify each task has the expected number of rubrics."""
 
     def test_easy_rubric_count(self) -> None:
-        """Easy: 1 root diagnosed + 1 root fixed + all_restored + no_incorrect + efficiency = 5."""
+        """Easy: 1×(diagnosed + fixed + diag_before_fix) + all_restored + no_incorrect + critical_ack + efficiency = 7."""
         env = IncidentResponseEnvironment()
         env.reset(task_name="single_service_failure")
         for action in GOLDEN_PATHS["single_service_failure"]:
             obs = env.step(action)
-        assert len(obs.rubric_results) == 5
+        assert len(obs.rubric_results) == 7
 
     def test_medium_rubric_count(self) -> None:
-        """Medium: 1 root diagnosed + 1 root fixed + all_restored + no_incorrect + efficiency = 5."""
+        """Medium: 1×(diagnosed + fixed + diag_before_fix) + all_restored + no_incorrect + critical_ack + efficiency = 7."""
         env = IncidentResponseEnvironment()
         env.reset(task_name="multi_service_correlation")
         for action in GOLDEN_PATHS["multi_service_correlation"]:
             obs = env.step(action)
-        assert len(obs.rubric_results) == 5
+        assert len(obs.rubric_results) == 7
 
     def test_hard_rubric_count(self) -> None:
-        """Hard: 2 roots diagnosed + 2 roots fixed + all_restored + no_incorrect + efficiency = 7."""
+        """Hard: 3×(diagnosed + fixed + diag_before_fix) + all_restored + no_incorrect + critical_ack + efficiency = 13."""
         env = IncidentResponseEnvironment()
         env.reset(task_name="cascading_outage")
         for action in GOLDEN_PATHS["cascading_outage"]:
             obs = env.step(action)
-        assert len(obs.rubric_results) == 7
+        assert len(obs.rubric_results) == 13

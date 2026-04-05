@@ -33,28 +33,17 @@ HF_TOKEN = os.getenv("HF_TOKEN", "")
 MAX_STEPS_PER_TASK = 50  # Safety cap to avoid runaway episodes
 
 SYSTEM_PROMPT = """\
-You are an expert Site Reliability Engineer (SRE) on-call for a production incident.
+You are an SRE on-call responding to a production incident.
 
-Your goal: Identify root causes and fix them to restore all services.
-
-KEY RULES:
-- Services with NO dependencies that are DOWN are likely ROOT CAUSES — diagnose and fix those first.
-- Downstream services recover automatically when their upstream root cause is fixed.
-- NEVER fix the same service twice. If it says "already fixed", look for OTHER broken services.
-- There may be MULTIPLE root causes — after fixing one, check if services are still broken.
-- If services remain down after a fix, there is ANOTHER root cause to find.
-
-WORKFLOW:
-1. Identify services that are DOWN and have NO dependencies — these are root causes.
-2. Diagnose one of them to confirm.
-3. Fix it.
-4. Check if all services recovered. If not, find the NEXT root cause.
-5. Repeat until all services are healthy.
+Analyze the alerts and service statuses to identify root causes and fix them.
+Acknowledge critical alerts. Diagnose services before fixing them.
+There may be multiple root causes. Downstream services recover automatically
+when their upstream dependencies are restored.
 
 Respond with a JSON object ONLY (no markdown, no explanation):
 {"action_type": "<action>", "target_service": "<service_name>"}
 
-Valid action_type values: acknowledge, diagnose, fix, escalate, check_status
+Valid actions: acknowledge, diagnose, fix, escalate, check_status
 """
 
 TASKS = ["single_service_failure", "multi_service_correlation", "cascading_outage"]
@@ -70,18 +59,12 @@ def build_user_prompt(obs) -> str:
             f"  [{ack}] {a['severity'].upper():8s} | {a['service']:20s} | {a['message']}"
         )
 
-    # Separate services by status for clarity
-    down_svcs = [s for s, st in obs.services.items() if st == "down"]
-    degraded_svcs = [s for s, st in obs.services.items() if st == "degraded"]
-    healthy_svcs = [s for s, st in obs.services.items() if st == "healthy"]
-
-    # Build dependency info for broken services only (reduces noise)
-    broken_detail = []
-    for svc in down_svcs + degraded_svcs:
+    # Build service status table (raw — no hints about root causes)
+    svc_lines = []
+    for svc, status in sorted(obs.services.items()):
         deps = obs.dependencies.get(svc, [])
-        dep_statuses = [f"{d}({obs.services.get(d, '?')})" for d in deps]
-        dep_str = f" — depends on: {', '.join(dep_statuses)}" if deps else " — no dependencies (possible root cause)"
-        broken_detail.append(f"  {obs.services[svc]:10s} | {svc}{dep_str}")
+        dep_str = f" (depends on: {', '.join(deps)})" if deps else ""
+        svc_lines.append(f"  {status:10s} | {svc}{dep_str}")
 
     # Build diagnostic summary
     diag_lines = []
@@ -92,20 +75,16 @@ def build_user_prompt(obs) -> str:
 Services restored: {obs.resolved_count}/{obs.total_services}
 Last action result: {obs.message}
 
-STILL DOWN/DEGRADED (focus here):
-{chr(10).join(broken_detail) if broken_detail else "  None — all services healthy!"}
+ALERTS:
+{chr(10).join(alert_lines) if alert_lines else "  No alerts"}
 
-HEALTHY SERVICES: {', '.join(healthy_svcs) if healthy_svcs else 'none'}
-
-UNACKNOWLEDGED ALERTS:
-{chr(10).join(a for a in alert_lines if '[NEW]' in a) or "  All acknowledged"}
+SERVICE STATUS:
+{chr(10).join(svc_lines)}
 
 DIAGNOSTICS COLLECTED:
-{chr(10).join(diag_lines) if diag_lines else "  None yet — use 'diagnose' to investigate broken services with no dependencies"}
+{chr(10).join(diag_lines) if diag_lines else "  None yet — use 'diagnose' to investigate services"}
 
-IMPORTANT: If a service is already fixed, move on to the next broken service.
-Look for services that are DOWN with no dependencies — those are likely root causes.
-Respond with JSON only: {{"action_type": "...", "target_service": "..."}}"""
+Choose your next action. Respond with JSON only: {{"action_type": "...", "target_service": "..."}}"""
 
     return prompt
 

@@ -117,7 +117,7 @@ class TestEpisodeLifecycle:
         assert obs2.total_services == 6
 
         obs3 = env.reset(task_name="cascading_outage")
-        assert obs3.total_services == 12
+        assert obs3.total_services == 13
 
     def test_unknown_task_name(self) -> None:
         env = IncidentResponseEnvironment()

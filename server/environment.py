@@ -56,6 +56,8 @@ class IncidentResponseEnvironment(
         self._fixed: Set[str] = set()
         self._symptom_fixes: Set[str] = set()  # Track incorrect fixes
         self._root_causes: Set[str] = set()
+        self._diagnosed_before_fix: Dict[str, bool] = {}  # Was root cause diagnosed before fix?
+        self._fix_order: List[str] = []  # Order in which root causes were fixed
         self._actions_taken: List[str] = []
         self._diagnostic_results: Dict[str, str] = {}
         self._done: bool = False
@@ -123,6 +125,8 @@ class IncidentResponseEnvironment(
         self._diagnosed = set()
         self._fixed = set()
         self._symptom_fixes = set()
+        self._diagnosed_before_fix = {}
+        self._fix_order = []
         self._actions_taken = []
         self._diagnostic_results = {}
         self._done = False
@@ -231,9 +235,11 @@ class IncidentResponseEnvironment(
         so they scale correctly across easy/medium/hard tasks.
         """
         rubrics: List[Dict[str, Any]] = []
+        all_healthy = all(s == "healthy" for s in self._services.values())
+        rc_list = self._scenario.root_cause_services
 
-        # Per-root-cause rubrics
-        for rc_name in self._scenario.root_cause_services:
+        # --- Per-root-cause rubrics ---
+        for rc_name in rc_list:
             rubrics.append({
                 "name": f"Root cause '{rc_name}' diagnosed",
                 "eval_function": f"eval_{rc_name}_diagnosed",
@@ -247,8 +253,17 @@ class IncidentResponseEnvironment(
                 "passed": rc_name in self._fixed,
             })
 
-        # All services restored
-        all_healthy = all(s == "healthy" for s in self._services.values())
+        # --- Diagnosed before fixing (for each root cause) ---
+        for rc_name in rc_list:
+            was_diagnosed_first = self._diagnosed_before_fix.get(rc_name, False)
+            rubrics.append({
+                "name": f"Diagnosed '{rc_name}' before applying fix",
+                "eval_function": f"eval_{rc_name}_diagnosed_before_fix",
+                "score": 1.0 if was_diagnosed_first else 0.0,
+                "passed": was_diagnosed_first,
+            })
+
+        # --- All services restored ---
         rubrics.append({
             "name": "All services restored to healthy",
             "eval_function": "eval_all_services_restored",
@@ -256,7 +271,7 @@ class IncidentResponseEnvironment(
             "passed": all_healthy,
         })
 
-        # No incorrect fixes (agent didn't waste time fixing symptoms)
+        # --- No incorrect fixes ---
         no_bad_fixes = len(self._symptom_fixes) == 0
         rubrics.append({
             "name": "No incorrect symptom fixes attempted",
@@ -265,7 +280,21 @@ class IncidentResponseEnvironment(
             "passed": no_bad_fixes,
         })
 
-        # Step efficiency — completed within 60% of max steps
+        # --- Acknowledged all critical-severity alerts ---
+        critical_alerts = [
+            a for a in self._scenario.alerts if a.severity == "critical"
+        ]
+        all_critical_acked = all(
+            a.alert_id in self._acknowledged for a in critical_alerts
+        )
+        rubrics.append({
+            "name": "All critical-severity alerts acknowledged",
+            "eval_function": "eval_critical_alerts_acknowledged",
+            "score": 1.0 if all_critical_acked else 0.0,
+            "passed": all_critical_acked,
+        })
+
+        # --- Step efficiency ---
         if self._scenario:
             threshold = int(self._scenario.max_steps * 0.6)
             efficient = self._state.step_count <= threshold
@@ -349,6 +378,8 @@ class IncidentResponseEnvironment(
 
         if target in self._root_causes:
             self._services[target] = "healthy"
+            self._diagnosed_before_fix[target] = target in self._diagnosed
+            self._fix_order.append(target)
             return (
                 f"Fix applied to root cause '{target}'. "
                 f"Service restored to healthy. Checking downstream dependencies..."

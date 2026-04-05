@@ -9,7 +9,7 @@ to initialise episodes — this module is pure data, no logic.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Any, Dict, List
 
 
 @dataclass(frozen=True)
@@ -36,6 +36,14 @@ class ServiceDef:
 
 
 @dataclass(frozen=True)
+class Technique:
+    """Tracks whether a hardening technique is applied to a task."""
+
+    applied: bool
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class Scenario:
     """Complete incident scenario for one task."""
 
@@ -46,6 +54,7 @@ class Scenario:
     alerts: List[Alert]
     max_steps: int
     root_cause_services: List[str]  # Names of services that are root causes
+    techniques: Dict[str, Technique] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +135,28 @@ SINGLE_SERVICE_FAILURE = Scenario(
     ],
     max_steps=15,
     root_cause_services=["database"],
+    techniques={
+        "exploratory_discovery": Technique(
+            applied=True,
+            detail="Agent must diagnose services to discover the database is the root cause. "
+            "Alert messages hint but don't confirm — diagnosis is required.",
+        ),
+        "indirect_references": Technique(
+            applied=True,
+            detail="Task says 'something is wrong with the backend' — doesn't name 'database' directly. "
+            "Agent must infer from alerts and diagnostics.",
+        ),
+        "state_dependent_logic": Technique(
+            applied=True,
+            detail="Agent must read service statuses to determine which service to investigate. "
+            "The 'down' service (database) vs 'degraded' services (api, web) is the signal.",
+        ),
+        "chained_operations": Technique(applied=False),
+        "bulk_conditional": Technique(applied=False),
+        "cross_feature": Technique(applied=False),
+        "disambiguation": Technique(applied=False),
+        "non_obvious_paths": Technique(applied=False),
+    },
 )
 
 
@@ -260,23 +291,56 @@ MULTI_SERVICE_CORRELATION = Scenario(
     ],
     max_steps=25,
     root_cause_services=["redis"],
+    techniques={
+        "exploratory_discovery": Technique(
+            applied=True,
+            detail="Agent must investigate multiple services to discover redis is the root cause. "
+            "Five alerts across four services — only diagnostics reveal the upstream chain.",
+        ),
+        "indirect_references": Technique(
+            applied=True,
+            detail="Task says 'everything login-related is dead' and 'orders still going through'. "
+            "Agent must map these symptoms to auth_service (redis-dependent) vs order_service (postgres-dependent).",
+        ),
+        "disambiguation": Technique(
+            applied=True,
+            detail="Two data stores exist: redis and postgres. Both could be root causes. "
+            "Agent must determine redis is broken while postgres is healthy. "
+            "Diagnosing postgres reveals 'OK: No anomalies detected' — agent must not fix it.",
+        ),
+        "cross_feature": Technique(
+            applied=True,
+            detail="Agent must use multiple action types across different service domains: "
+            "acknowledge critical alerts, diagnose data stores, and fix the correct one.",
+        ),
+        "state_dependent_logic": Technique(
+            applied=True,
+            detail="Postgres is healthy despite being a data store — agent must check state "
+            "before assuming it's broken. order_service is healthy, confirming postgres path works.",
+        ),
+        "chained_operations": Technique(applied=False),
+        "bulk_conditional": Technique(applied=False),
+        "non_obvious_paths": Technique(applied=False),
+    },
 )
 
 
 # ---------------------------------------------------------------------------
 # Task 3: Cascading Outage (Hard)
 # ---------------------------------------------------------------------------
-# Two simultaneous root causes in a complex dependency web:
+# THREE simultaneous root causes in a complex dependency web:
 #
-# cdn ── load_balancer ── web_server_1 ── app_server_1 ── primary_db (ROOT 1)
+# cdn ── load_balancer ── web_server_1 ── app_server_1 ── primary_db (ROOT 1: critical)
 #                       └ web_server_2 ── app_server_2 ── primary_db
 #                                       └ cache_layer ─── primary_db
-# monitoring ── worker_pool ── message_queue (ROOT 2)
+#                                                       └ session_store (ROOT 3: medium)
+# monitoring ── worker_pool ── message_queue (ROOT 2: high)
 #                            └ notification_service
 #
-# primary_db is disk_full (critical), message_queue has consumer_deadlock (high)
-# 12+ alerts fire including noise from monitoring flapping.
-# Agent must prioritise primary_db (critical) over message_queue (high).
+# primary_db is disk_full (critical), message_queue has consumer_deadlock (high),
+# session_store has memory_leak (medium — subtle, easily missed).
+# 15+ alerts fire including noise from monitoring flapping.
+# Agent must find ALL THREE root causes.
 # ---------------------------------------------------------------------------
 
 CASCADING_OUTAGE = Scenario(
@@ -289,10 +353,10 @@ CASCADING_OUTAGE = Scenario(
         "backed up with an SLA breach in 13 minutes. Notification service is "
         "dead too so customers aren't even getting status updates. Someone in "
         "#infra-alerts mentioned disk space on one of the databases but I "
-        "couldn't tell which one. Platform team thinks there might be TWO "
-        "separate things going on — the web stack issues and the worker/queue "
-        "issues might have different root causes. Start triaging by severity, "
-        "I'll join in 10."
+        "couldn't tell which one. Also getting complaints about slow logins "
+        "from users who CAN reach the site — might be a session thing? "
+        "Platform team thinks there could be MULTIPLE separate things going "
+        "on simultaneously. Start triaging, I'll join in 10."
     ),
     services=[
         ServiceDef(
@@ -342,13 +406,29 @@ CASCADING_OUTAGE = Scenario(
             ),
         ),
         ServiceDef(
+            name="session_store",
+            depends_on=[],
+            initial_status="degraded",
+            root_cause="memory_leak",
+            fix_action="restart_with_leak_fix",
+            diagnostic_output=(
+                "MEDIUM: Memory usage at 93% and climbing steadily (was 45% at deploy). "
+                "GC pressure causing 400ms pause spikes every 8 seconds. "
+                "Session lookup p99 latency: 1.2s (normal: 5ms). "
+                "Gradual degradation pattern consistent with memory leak in "
+                "session serialization introduced in last deploy. "
+                "Requires rolling restart with hotfix flag."
+            ),
+        ),
+        ServiceDef(
             name="cache_layer",
-            depends_on=["primary_db"],
+            depends_on=["primary_db", "session_store"],
             initial_status="degraded",
             diagnostic_output=(
                 "WARNING: Cache hit rate dropped from 94% to 12%. "
                 "Background refresh failing — cannot reach 'primary_db' for updates. "
-                "Serving stale data for cached keys. Cache misses returning errors."
+                "Session-aware cache invalidation also failing due to slow "
+                "'session_store' responses. Two upstream issues detected."
             ),
         ),
         ServiceDef(
@@ -508,9 +588,76 @@ CASCADING_OUTAGE = Scenario(
             message="Monitoring data 12 minutes stale — metric ingestion worker backlogged",
             is_root_cause=False,
         ),
+        # Subtle root cause — easily missed among the noise
+        Alert(
+            alert_id="alert-213",
+            severity="medium",
+            service="session_store",
+            message="Session store latency elevated — p99 at 1.2s, intermittent timeout errors",
+            is_root_cause=True,
+        ),
+        # Red herring alert — looks like a root cause but isn't
+        Alert(
+            alert_id="alert-214",
+            severity="high",
+            service="cache_layer",
+            message="Cache layer serving stale data — multiple upstream dependency failures detected",
+            is_root_cause=False,
+        ),
     ],
-    max_steps=40,
-    root_cause_services=["primary_db", "message_queue"],
+    max_steps=50,
+    root_cause_services=["primary_db", "message_queue", "session_store"],
+    techniques={
+        "exploratory_discovery": Technique(
+            applied=True,
+            detail="14 alerts across 13 services. Agent must investigate systematically "
+            "to find all 3 root causes among the noise. Requires comparing diagnostic "
+            "outputs across services to distinguish root causes from cascading symptoms.",
+        ),
+        "indirect_references": Technique(
+            applied=True,
+            detail="Task says 'disk space on one of the databases' (doesn't name primary_db), "
+            "'slow logins — might be a session thing?' (doesn't name session_store), "
+            "and 'worker/queue issues' (doesn't name message_queue).",
+        ),
+        "chained_operations": Technique(
+            applied=True,
+            detail="Fixing primary_db restores 8 services but cache_layer stays degraded — "
+            "because it also depends on session_store. Agent must discover this second "
+            "dependency chain only AFTER fixing the first root cause.",
+        ),
+        "bulk_conditional": Technique(
+            applied=True,
+            detail="3 root causes with different severities need different triage priority: "
+            "primary_db (critical) first, message_queue (high) second, session_store (medium) last. "
+            "Symptom services should be acknowledged, not fixed.",
+        ),
+        "disambiguation": Technique(
+            applied=True,
+            detail="app_server_1 and app_server_2 have nearly identical symptoms and both "
+            "depend on primary_db. cache_layer alert looks like a root cause ('multiple "
+            "upstream dependency failures') but is actually a symptom of two root causes.",
+        ),
+        "non_obvious_paths": Technique(
+            applied=True,
+            detail="session_store is a subtle medium-severity root cause. Its alert is buried "
+            "among 13 other alerts with higher severities. Its diagnostic reveals a memory "
+            "leak — not an obvious infrastructure failure like disk_full or deadlock.",
+        ),
+        "state_dependent_logic": Technique(
+            applied=True,
+            detail="After fixing primary_db, agent must re-assess which services are still "
+            "broken. cache_layer remains degraded despite primary_db being fixed — this is "
+            "the signal that session_store is a separate root cause. Agent must read post-fix "
+            "state to discover this.",
+        ),
+        "cross_feature": Technique(
+            applied=True,
+            detail="Agent must acknowledge critical alerts, diagnose services across two "
+            "independent failure domains (web stack + worker stack + session layer), "
+            "and apply fixes in priority order.",
+        ),
+    },
 )
 
 
