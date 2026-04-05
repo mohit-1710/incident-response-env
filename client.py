@@ -11,11 +11,18 @@ from typing import Any, Dict, List
 from openenv.core.client_types import StepResult
 from openenv.core.env_client import EnvClient
 
-from incident_response_env.models import (
-    IncidentAction,
-    IncidentObservation,
-    IncidentState,
-)
+try:
+    from incident_response_env.models import (
+        IncidentAction,
+        IncidentObservation,
+        IncidentState,
+    )
+except ImportError:
+    from models import (  # type: ignore[no-redef]
+        IncidentAction,
+        IncidentObservation,
+        IncidentState,
+    )
 
 
 class IncidentResponseEnv(
