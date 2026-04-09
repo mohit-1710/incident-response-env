@@ -12,6 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source into the package directory
 COPY . /app/incident_response_env/
 
+# openenv-core's _load_readme_from_filesystem looks for /app/README.md.
+# Mirror our README there so the /web playground can render it.
+RUN cp /app/incident_response_env/README.md /app/README.md
+
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 # Enable the built-in Gradio web interface at /web (openenv-core feature)
