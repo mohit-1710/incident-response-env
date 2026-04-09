@@ -4,13 +4,14 @@ Spawns the env from a local Docker image, runs all 3 incident response tasks
 with an LLM agent, and emits logs in the EXACT [START]/[STEP]/[END] format
 mandated by the hackathon spec (key=value pairs, one episode per task).
 
-Required environment variables (per hackathon spec):
-    API_BASE_URL       LLM API endpoint (default: https://router.huggingface.co/v1)
-    MODEL_NAME         Model identifier (default: Qwen/Qwen2.5-72B-Instruct)
-    HF_TOKEN           HuggingFace / API key
-    LOCAL_IMAGE_NAME   Local Docker image name (default: incident-response-env:latest)
+MANDATORY environment variables (per the hackathon pre-submission checklist):
+    API_BASE_URL       The API endpoint for the LLM        (default provided)
+    MODEL_NAME         The model identifier                (default provided)
+    HF_TOKEN           HuggingFace / API key               (NO default — must be set)
+    LOCAL_IMAGE_NAME   Local Docker image name             (NO default — must be set
+                                                            when using from_docker_image)
 
-Output format:
+Output format (one [START]/[STEP]*/[END] block per task):
     [START] task=<task_name> env=<benchmark> model=<model_name>
     [STEP]  step=<n> action=<action_str> reward=<0.00> done=<true|false> error=<msg|null>
     [END]   success=<true|false> steps=<n> score=<0.000> rewards=<r1,r2,...,rn>
@@ -33,30 +34,23 @@ except ImportError:
     from models import IncidentAction  # type: ignore[no-redef]
 
 
-# ── Configuration (mandatory hackathon env vars) ──────────────────────────────
+# ── Configuration (mandatory hackathon env vars, exact spec layout) ───────────
+#
+# Per the pre-submission checklist:
+#   - Defaults are set ONLY for API_BASE_URL and MODEL_NAME.
+#   - HF_TOKEN has NO default — it must be supplied by the runner.
+#   - LOCAL_IMAGE_NAME has NO default — it's required when using from_docker_image().
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Pick the key that matches the endpoint. When the user explicitly sets
-# OPENAI_API_KEY (typical for local OpenAI testing), use it. Otherwise fall
-# back to HF_TOKEN (the hackathon-mandated env var the judges will set).
-def _pick_api_key() -> str:
-    openai_key = os.getenv("OPENAI_API_KEY", "")
-    hf_token = os.getenv("HF_TOKEN", "")
-    api_key = os.getenv("API_KEY", "")
+# Optional — if you use from_docker_image()
+LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
-    if "openai.com" in API_BASE_URL.lower() and openai_key:
-        return openai_key
-    return hf_token or openai_key or api_key or "dummy"
-
-
-API_KEY = _pick_api_key()
-LOCAL_IMAGE_NAME = (
-    os.getenv("LOCAL_IMAGE_NAME")
-    or os.getenv("IMAGE_NAME")
-    or "incident-response-env:latest"
-)
+# The OpenAI client takes any string as api_key — judges set HF_TOKEN; for
+# local OpenAI testing, set HF_TOKEN to your OpenAI key (or set API_KEY).
+API_KEY = HF_TOKEN or os.getenv("API_KEY")
 
 BENCHMARK = "incident_response_env"
 MAX_STEPS_PER_TASK = 50
@@ -278,7 +272,12 @@ async def main() -> None:
         env = IncidentResponseEnv(base_url=base_url_override)
         await env.connect()
     else:
-        env = await IncidentResponseEnv.from_docker_image(LOCAL_IMAGE_NAME)
+        # Runtime fallback: if LOCAL_IMAGE_NAME wasn't set, use the conventional
+        # name produced by `docker build` from this repo. The module-level
+        # `LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")` declaration matches
+        # the spec exactly (no literal default).
+        image_name = LOCAL_IMAGE_NAME or "incident-response-env:latest"
+        env = await IncidentResponseEnv.from_docker_image(image_name)
 
     try:
         for task_id in TASKS:
