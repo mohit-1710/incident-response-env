@@ -27,7 +27,8 @@ tasks:
   - id: cascading_outage
     name: "Cascading Outage"
     description: >
-      A major production outage with two simultaneous root causes in a
-      12-service dependency web. An alert storm of 12+ alerts makes
-      triage challenging. Identify both root causes, fix them in the
-      correct priority order, and restore the entire system. (Hard)
+      A major production outage with three simultaneous root causes in a
+      13-service dependency web. An alert storm of 14 alerts makes
+      triage challenging. Identify all three root causes (including a
+      subtle session-store memory leak), fix them in the correct priority
+      order, and restore the entire system. (Hard)

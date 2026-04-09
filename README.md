@@ -5,6 +5,7 @@ colorFrom: red
 colorTo: yellow
 sdk: docker
 app_port: 7860
+base_path: /web
 tags:
   - openenv
 ---

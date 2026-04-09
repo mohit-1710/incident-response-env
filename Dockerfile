@@ -14,6 +14,8 @@ COPY . /app/incident_response_env/
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+# Enable the built-in Gradio web interface at /web (openenv-core feature)
+ENV ENABLE_WEB_INTERFACE=true
 
 EXPOSE 7860
 
