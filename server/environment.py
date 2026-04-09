@@ -145,6 +145,16 @@ class IncidentResponseEnvironment(
         **kwargs: Any,
     ) -> IncidentObservation:
         """Process one agent action and return the updated observation."""
+        # Guard: env not initialized (e.g. HTTP /step called without prior /reset).
+        # WebSocket flow always resets first, so this branch is for stateless HTTP only.
+        if self._scenario is None:
+            self._done = True
+            return IncidentObservation(
+                done=True,
+                reward=0.0,
+                message="Environment not initialized. Call reset() before step().",
+            )
+
         # Guard: episode already finished
         if self._done:
             return self._build_observation(
