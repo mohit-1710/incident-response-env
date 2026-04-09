@@ -37,7 +37,21 @@ except ImportError:
 
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("OPENAI_API_KEY") or os.getenv("API_KEY") or "dummy"
+
+# Pick the key that matches the endpoint. When the user explicitly sets
+# OPENAI_API_KEY (typical for local OpenAI testing), use it. Otherwise fall
+# back to HF_TOKEN (the hackathon-mandated env var the judges will set).
+def _pick_api_key() -> str:
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    hf_token = os.getenv("HF_TOKEN", "")
+    api_key = os.getenv("API_KEY", "")
+
+    if "openai.com" in API_BASE_URL.lower() and openai_key:
+        return openai_key
+    return hf_token or openai_key or api_key or "dummy"
+
+
+API_KEY = _pick_api_key()
 LOCAL_IMAGE_NAME = (
     os.getenv("LOCAL_IMAGE_NAME")
     or os.getenv("IMAGE_NAME")

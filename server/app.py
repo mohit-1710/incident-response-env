@@ -17,7 +17,7 @@ app = create_app(
 )
 
 
-def main(host: str = "0.0.0.0", port: int = 7860) -> None:
+def main(host: str = "0.0.0.0", port: int = 8000) -> None:
     """Entry point for direct execution (used by [project.scripts])."""
     import uvicorn
 
