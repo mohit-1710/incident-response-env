@@ -235,7 +235,7 @@ class IncidentResponseEnvironment(
         return self._state
 
     # ------------------------------------------------------------------
-    # Binary rubric evaluation (Scaler grading pattern)
+    # Binary rubric evaluation
     # ------------------------------------------------------------------
 
     def _evaluate_rubrics(self) -> List[Dict[str, Any]]:
