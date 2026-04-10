@@ -160,7 +160,9 @@ class TestMaxSteps:
         for _ in range(15):
             obs = env.step(IncidentAction(action_type="check_status", target_service=""))
 
-        assert obs.reward <= 0.2  # At most 1 rubric passes vacuously
+        # Doing nothing gives a small score (mapped to (0.01, 0.99) range).
+        assert 0.0 < obs.reward <= 0.25
+        assert obs.reward < 1.0
 
 
 class TestCascadingRecovery:

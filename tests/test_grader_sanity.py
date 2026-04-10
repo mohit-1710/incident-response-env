@@ -81,10 +81,16 @@ class TestGoldenPath:
             obs = env.step(action)
 
         assert obs.done is True
-        assert obs.reward == 1.0, (
-            f"Golden path should pass all rubrics. "
-            f"Failed: {[r['name'] for r in obs.rubric_results if not r['passed']]}"
+        # Score is mapped from [0, 1] -> (0.01, 0.99) so it stays strictly
+        # inside the open interval (validator requires this).
+        # All rubrics passing produces the maximum: 0.99.
+        assert obs.reward == pytest.approx(0.99, abs=1e-6), (
+            f"Golden path should pass all rubrics (score=0.99). "
+            f"Got {obs.reward}. Failed rubrics: "
+            f"{[r['name'] for r in obs.rubric_results if not r['passed']]}"
         )
+        # All individual rubrics should still be 1.0 (binary)
+        assert all(r["passed"] for r in obs.rubric_results)
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
     def test_golden_path_all_services_healthy(self, task_name: str) -> None:
@@ -130,7 +136,8 @@ class TestPartialProgress:
                 break
 
         assert obs.done is True
-        assert 0.0 < obs.reward < 1.0  # Some rubrics pass, not all
+        # Partial credit must land strictly inside the open interval
+        assert 0.01 < obs.reward < 0.99
 
 
 class TestWrongFixPenalty:
@@ -151,28 +158,45 @@ class TestWrongFixPenalty:
             r for r in obs.rubric_results if "incorrect" in r["name"].lower()
         )
         assert no_fix_rubric["passed"] is False
-        assert obs.reward < 1.0  # Can't get perfect score with a symptom fix
+        # Symptom fix means at least one rubric fails -> score < 0.99 cap
+        assert obs.reward < 0.99
 
 
 class TestRewardBounds:
-    """Verify reward stays within [0.0, 1.0]."""
+    """Verify reward stays strictly inside the open interval (0, 1)."""
 
     @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
-    def test_golden_path_reward_exactly_one(self, task_name: str) -> None:
+    def test_golden_path_reward_at_max(self, task_name: str) -> None:
         env = IncidentResponseEnvironment()
         env.reset(task_name=task_name)
         for action in GOLDEN_PATHS[task_name]:
             obs = env.step(action)
-        assert obs.reward == 1.0
+        # Maximum possible score (all rubrics pass) is mapped to 0.99,
+        # never exactly 1.0, so the validator's strict (0,1) check passes.
+        assert obs.reward == pytest.approx(0.99, abs=1e-6)
+        assert 0.0 < obs.reward < 1.0  # strictly inside the open interval
+
+    @pytest.mark.parametrize("task_name", AVAILABLE_TASKS)
+    def test_score_is_strictly_inside_open_interval(self, task_name: str) -> None:
+        """No matter what actions, the final score must be in (0, 1) strictly."""
+        env = IncidentResponseEnvironment()
+        env.reset(task_name=task_name)
+        for action in GOLDEN_PATHS[task_name]:
+            obs = env.step(action)
+        assert 0.0 < obs.reward, f"Score must be > 0, got {obs.reward}"
+        assert obs.reward < 1.0, f"Score must be < 1, got {obs.reward}"
 
     def test_no_actions_scores_near_zero(self) -> None:
-        """Doing nothing passes at most the 'no incorrect fixes' rubric vacuously."""
+        """Doing nothing passes few rubrics — score lands near (but above) 0."""
         env = IncidentResponseEnvironment()
         env.reset(task_name="single_service_failure")
         for _ in range(15):
             obs = env.step(IncidentAction(action_type="check_status", target_service=""))
         assert obs.done is True
-        assert obs.reward <= 0.2  # At most 1 vacuous rubric passes
+        # With the (0.01, 0.99) mapping, doing nothing gives a low but
+        # strictly positive score.
+        assert 0.0 < obs.reward <= 0.25
+        assert obs.reward < 1.0
 
 
 class TestRubricCounts:

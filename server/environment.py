@@ -318,11 +318,26 @@ class IncidentResponseEnvironment(
         return rubrics
 
     def _compute_grader_score(self, rubrics: List[Dict[str, Any]]) -> float:
-        """Compute final score as passed_rubrics / total_rubrics."""
+        """Compute final score from rubric pass rate.
+
+        The raw score is `passed / total`. We then map it from the closed
+        interval [0, 1] into the open interval (0.01, 0.99) using a small
+        epsilon offset, because the hackathon validator requires every
+        task score to be strictly between 0 and 1 (not 0.0 and not 1.0).
+
+        Relative ordering is preserved: a perfect run still produces the
+        highest possible score (0.99), a zero run still produces the
+        lowest (0.01), and partial credit interpolates linearly.
+        """
         if not rubrics:
-            return 0.0
+            return 0.01  # never return exactly 0
         passed = sum(1 for r in rubrics if r["passed"])
-        score = passed / len(rubrics)
+        raw_score = passed / len(rubrics)
+        # Scale [0.0, 1.0] -> [0.01, 0.99] so the score is strictly in (0, 1).
+        EPSILON = 0.01
+        score = EPSILON + (1.0 - 2.0 * EPSILON) * raw_score
+        # Belt-and-suspenders clamp to absolutely guarantee the open interval.
+        score = max(0.001, min(0.999, score))
         self._state.accumulated_reward = score
         return score
 
