@@ -48,6 +48,15 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 # Optional — if you use from_docker_image()
 LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")
 
+# The official sample_interface_script.py uses `IMAGE_NAME` instead of
+# `LOCAL_IMAGE_NAME`. The hackathon checklist asks for `LOCAL_IMAGE_NAME`
+# (the literal line above). To handle both validators, accept either.
+_IMAGE_NAME = LOCAL_IMAGE_NAME or os.getenv("IMAGE_NAME")
+
+# Published HF Space — used as a fallback so we never depend on a local
+# image tag we didn't actually create.
+HF_REPO_ID = "mohit-1710/incident-response-env"
+
 # The OpenAI client takes any string as api_key — judges set HF_TOKEN; for
 # local OpenAI testing, set HF_TOKEN to your OpenAI key (or set API_KEY).
 API_KEY = HF_TOKEN or os.getenv("API_KEY")
@@ -261,23 +270,63 @@ async def run_task(client: OpenAI, env, task_id: str) -> None:
         log_end(success=success, steps=steps_taken, score=final_score, rewards=rewards)
 
 
+async def _construct_env():
+    """Try every reasonable way to get an env handle, in order of preference.
+
+    1. OPENENV_BASE_URL — for local dev/testing against an already-running server.
+    2. LOCAL_IMAGE_NAME / IMAGE_NAME — for judges who pre-built the image and
+       passed the tag via env var.
+    3. from_env(HF_REPO_ID) — pulls the published Space from the HF registry.
+       Always works because we control the published Space.
+
+    Returns the connected env (already connected/started) or raises.
+    """
+    errors: List[str] = []
+
+    base_url_override = os.getenv("OPENENV_BASE_URL")
+    if base_url_override:
+        try:
+            env = IncidentResponseEnv(base_url=base_url_override)
+            await env.connect()
+            return env
+        except Exception as exc:
+            errors.append(f"OPENENV_BASE_URL ({base_url_override}): {exc}")
+
+    if _IMAGE_NAME:
+        try:
+            return await IncidentResponseEnv.from_docker_image(_IMAGE_NAME)
+        except Exception as exc:
+            errors.append(f"from_docker_image({_IMAGE_NAME!r}): {exc}")
+
+    # Fallback: pull from HF registry. Always tries this as a last resort,
+    # even if a local image name was provided but failed.
+    try:
+        return await IncidentResponseEnv.from_env(HF_REPO_ID)
+    except Exception as exc:
+        errors.append(f"from_env({HF_REPO_ID!r}): {exc}")
+
+    raise RuntimeError(
+        "Could not start environment. Tried:\n  - "
+        + "\n  - ".join(errors)
+    )
+
+
 async def main() -> None:
-    """Spawn the env from a local Docker image and run all 3 tasks."""
+    """Spawn the env (Docker or HF registry) and run all 3 tasks."""
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    # Allow override via OPENENV_BASE_URL for local testing without Docker
-    base_url_override = os.getenv("OPENENV_BASE_URL")
-
-    if base_url_override:
-        env = IncidentResponseEnv(base_url=base_url_override)
-        await env.connect()
-    else:
-        # Runtime fallback: if LOCAL_IMAGE_NAME wasn't set, use the conventional
-        # name produced by `docker build` from this repo. The module-level
-        # `LOCAL_IMAGE_NAME = os.getenv("LOCAL_IMAGE_NAME")` declaration matches
-        # the spec exactly (no literal default).
-        image_name = LOCAL_IMAGE_NAME or "incident-response-env:latest"
-        env = await IncidentResponseEnv.from_docker_image(image_name)
+    try:
+        env = await _construct_env()
+    except Exception as exc:
+        # Emit a clean failure with the full fallback chain so judges see
+        # exactly what was tried, instead of a Python traceback.
+        print(f"[ERROR] {exc}", file=sys.stderr, flush=True)
+        # Still emit empty [START]/[END] blocks for each task so the parser
+        # doesn't crash on missing output.
+        for task_id in TASKS:
+            log_start(task=task_id, env_name=BENCHMARK, model=MODEL_NAME)
+            log_end(success=False, steps=0, score=0.0, rewards=[])
+        sys.exit(1)
 
     try:
         for task_id in TASKS:
