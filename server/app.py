@@ -1,26 +1,27 @@
 """FastAPI application wiring for the Incident Response environment."""
 
-# ── Monkey-patch the openenv Quick Start template BEFORE create_app() ────────
+# ── Monkey-patch openenv-core's Gradio UI builder BEFORE create_app() ────────
 #
-# The default openenv-core /web Gradio UI hard-codes a chat-style code snippet
-# (`IncidentAction(message="...")`) in its Quick Start accordion, which is
-# wrong for this env (our action shape is `action_type` + `target_service`,
-# not `message`). The framework reads this template via the
-# `get_quick_start_markdown` function in `openenv.core.env_server.web_interface`.
+# We replace `build_gradio_app` (the function `create_web_interface_app` calls
+# to construct the SINGLE Gradio app it mounts at /web) with our own builder.
 #
-# Passing a custom `gradio_builder` doesn't help because the framework wraps
-# both the default and the custom UI in a TabbedInterface — you'd see TWO
-# UIs, not one. The cleanest fix is to monkey-patch the template function
-# to return an empty string. When `quick_start_md` is empty/falsy, the
-# Quick Start accordion is skipped entirely (see gradio_ui.py line 139:
-# `if quick_start_md:`).
+# Why monkey-patch instead of `create_app(gradio_builder=...)` ?
+#   The framework, when given a `gradio_builder`, wraps the DEFAULT UI and
+#   the CUSTOM UI in a `gr.TabbedInterface` — you'd see two tabs ("Playground"
+#   and "Custom"). Patching `build_gradio_app` directly bypasses that and
+#   makes our UI the only UI, which is what we want.
 #
-# This patch only affects the cosmetic Quick Start panel. It does NOT touch
-# the playground, the README accordion, the action dropdowns, the WebSocket
-# routes, the HTTP routes, or any grading logic.
+# This only affects the cosmetic /web playground. It does NOT touch the
+# WebSocket routes, the HTTP routes, the grading logic, or anything the
+# judges' inference.py runner uses.
 import openenv.core.env_server.web_interface as _openenv_wi  # noqa: E402
 
-_openenv_wi.get_quick_start_markdown = lambda *args, **kwargs: ""
+try:
+    from .web_ui import build_incident_ui as _build_incident_ui
+except ImportError:
+    from server.web_ui import build_incident_ui as _build_incident_ui  # type: ignore[no-redef]
+
+_openenv_wi.build_gradio_app = _build_incident_ui
 
 try:
     from ..models import IncidentAction, IncidentObservation

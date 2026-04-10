@@ -13,7 +13,7 @@ tags:
   - agent-evaluation
 ---
 
-# 🚨 Incident Response Environment
+# Incident Response Environment
 
 > **An OpenEnv RL environment that turns SRE on-call triage into a measurable benchmark.**
 > Agents receive a flood of alerts from a broken production system, then must
